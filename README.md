@@ -1,25 +1,34 @@
 # Telegram Heart Ranker
 
-Telegram Heart Ranker 是一个本地运行的 Telegram 频道爱心反应排行榜机器人。它可以读取公开频道的历史消息，统计每条消息的爱心反应数量，并通过 bot 命令返回排行榜。
+Telegram Heart Ranker is a local Telegram bot that ranks public channel posts by
+their heart reactions. It reads channel history through your Telegram user
+session, stores message metadata in SQLite, and exposes rankings through bot
+commands.
 
-这个项目把 bot 当作命令入口；历史消息读取使用你的 Telegram 用户 session 通过 MTProto 完成，因为 Telegram Bot API 不能直接完成「输入任意公开频道链接并回溯历史消息」这类操作。
+The bot is the command interface, while historical indexing uses MTProto via
+Telethon. This is necessary because the Telegram Bot API cannot take an
+arbitrary public channel link and backfill historical messages on its own.
 
-## 功能
+## Features
 
-- 按爱心反应数排行公开 Telegram 频道消息。
-- 支持频道链接和 `@username`。
-- 支持本地 SQLite 缓存，避免每次翻页都重新读取 Telegram。
-- 支持分页按钮：`First`、`Prev`、`Next`、`Last`。
-- 支持时间筛选：全部、最近 30 天、最近 365 天。
-- 支持限制允许使用 bot 的 Telegram 用户 ID。
+- Rank public Telegram channel posts by heart reaction count.
+- Accept public channel links and `@username` references.
+- Cache indexed messages in a local SQLite database.
+- Page through ranking results with `First`, `Prev`, `Next`, and `Last` buttons.
+- Filter rankings by all time, the last 30 days, or the last 365 days.
+- Restrict bot access to specific Telegram user IDs.
 
-## 安装
+## Requirements
 
-先准备 Telegram API 凭据和 bot token：
+- Python 3.9 or newer.
+- A Telegram API ID and API hash from <https://my.telegram.org/apps>.
+- A Telegram bot token from `@BotFather`.
+- Access to the public channels you want to index from your Telegram account.
 
-1. 到 https://my.telegram.org/apps 创建应用，获取 `api_id` 和 `api_hash`。
-2. 在 Telegram 中通过 `@BotFather` 创建 bot，获取 bot token。
-3. 安装项目依赖：
+## Installation
+
+Create a Telegram application first, then create a bot with `@BotFather`.
+After that, install the project locally:
 
 ```bash
 python3 -m venv .venv
@@ -28,7 +37,7 @@ pip install -e ".[dev]"
 cp .env.example .env
 ```
 
-然后编辑 `.env`，至少填入：
+Edit `.env` and set at least these values:
 
 ```env
 TELEGRAM_API_ID=123456
@@ -36,39 +45,45 @@ TELEGRAM_API_HASH=your_api_hash
 TELEGRAM_BOT_TOKEN=your_bot_token
 ```
 
-`.env`、`sessions/`、`data/` 和 `logs/` 都是本地文件，默认不会提交到 Git。请不要把真实 token、session 文件或本地数据库上传到公开仓库。
+Keep `.env`, `sessions/`, `data/`, and `logs/` local. They may contain secrets,
+Telegram session files, local databases, or runtime logs and should not be
+committed to a public repository.
 
-## 运行
+## Running
+
+Start the bot with:
 
 ```bash
 python -m tg_heart_ranker
 ```
 
-也可以使用安装后的命令：
+Or use the installed console script:
 
 ```bash
 tg-heart-ranker
 ```
 
-第一次运行时，Telethon 会在终端中要求输入手机号和登录验证码。登录成功后，用户 session 会保存到 `sessions/`。
+On the first run, Telethon will ask for your phone number and login code in the
+terminal. After a successful login, the user session is saved under `sessions/`.
 
-## 推荐的私有使用限制
+## Recommended Private Mode
 
-第一次启动 bot 后，在 Telegram 里发送：
+After the bot starts, send this command to it in Telegram:
 
 ```text
 /whoami
 ```
 
-复制返回的数字用户 ID，然后写入 `.env`：
+Copy the returned numeric user ID into `.env`:
 
 ```env
 TELEGRAM_ALLOWED_USER_IDS=123456789
 ```
 
-重启服务后，只有这些用户 ID 可以使用这个 bot。
+Restart the bot. When this value is set, only the listed Telegram user IDs can
+use the bot. Multiple IDs can be separated with commas.
 
-## Bot 命令
+## Bot Commands
 
 ```text
 /start
@@ -79,7 +94,7 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 /status <channel_url>
 ```
 
-常用示例：
+Examples:
 
 ```text
 /rank https://t.me/some_public_channel 10
@@ -90,46 +105,82 @@ TELEGRAM_ALLOWED_USER_IDS=123456789
 /status @some_public_channel
 ```
 
-`/rank` 是主要命令。它会先刷新本地索引，再返回排行榜。`/top` 是同样行为的别名。你也可以直接发送公开频道链接或 `@username`，bot 会按 `/rank <channel> 10` 处理。
+`/rank` is the main command. It refreshes the local index when needed and then
+returns the ranking. `/top` is an alias for the same behavior. You can also send
+a public channel link or `@username` directly, and the bot treats it as:
 
-## 索引策略
+```text
+/rank <channel> 10
+```
 
-如果 `/index` 没有传 `message_limit`，会使用 `.env` 中的 `INDEX_MESSAGE_LIMIT`。默认值是 `5000`，表示读取最新 5000 条消息。
+## Indexing Strategy
 
-传入 `0` 表示读取所有可访问历史消息：
+When `/index` is called without `message_limit`, the bot uses
+`INDEX_MESSAGE_LIMIT` from `.env`. The example configuration sets this to
+`5000`, which indexes the latest 5,000 messages.
+
+Pass `0` to index all accessible history:
 
 ```text
 /index https://t.me/some_public_channel 0
 ```
 
-当 `/rank` 或 `/top` 遇到一个还没有本地数据的频道时，也会使用 `INDEX_MESSAGE_LIMIT` 做第一次索引。频道已经有本地数据且缓存超过 24 小时时，会使用 `RANK_REFRESH_MESSAGE_LIMIT` 刷新最新消息后再排行。
+When `/rank` or `/top` is used for a channel with no local data, the bot performs
+an initial index using `INDEX_MESSAGE_LIMIT`. If the channel already has local
+data and the cache is older than 24 hours, the bot refreshes only the newest
+`RANK_REFRESH_MESSAGE_LIMIT` messages before ranking.
 
-## 配置项
+## Configuration
 
-主要配置都在 `.env.example` 中：
+The main settings live in `.env.example`:
 
-- `TELEGRAM_API_ID`：Telegram 应用 API ID。
-- `TELEGRAM_API_HASH`：Telegram 应用 API hash。
-- `TELEGRAM_BOT_TOKEN`：BotFather 提供的 bot token。
-- `TELEGRAM_ALLOWED_USER_IDS`：允许使用 bot 的 Telegram 用户 ID，多个 ID 用逗号分隔。
-- `HEART_RANKER_DB`：SQLite 数据库路径。
-- `TELEGRAM_USER_SESSION`：用户 session 保存路径。
-- `TELEGRAM_BOT_SESSION`：bot session 保存路径。
-- `INDEX_MESSAGE_LIMIT`：默认索引消息数量。
-- `RANK_REFRESH_MESSAGE_LIMIT`：排行榜刷新时读取的最新消息数量。
-- `LOG_LEVEL`、`LOG_FILE`：日志级别和日志文件路径。
+- `TELEGRAM_API_ID`: Telegram application API ID.
+- `TELEGRAM_API_HASH`: Telegram application API hash.
+- `TELEGRAM_BOT_TOKEN`: Bot token from `@BotFather`.
+- `TELEGRAM_ALLOWED_USER_IDS`: Optional comma-separated list of Telegram user IDs allowed to use the bot.
+- `HEART_RANKER_DB`: SQLite database path.
+- `TELEGRAM_USER_SESSION`: Telethon user session path.
+- `TELEGRAM_BOT_SESSION`: Telethon bot session path.
+- `INDEX_MESSAGE_LIMIT`: Default number of messages to index.
+- `RANK_REFRESH_MESSAGE_LIMIT`: Number of newest messages to refresh before ranking an already indexed channel.
+- `INDEX_PROGRESS_EVERY`: How often indexing progress updates are sent.
+- `INDEX_REQUEST_SLEEP_SECONDS`: Small pause between batches to reduce pressure on Telegram.
+- `LOG_LEVEL`: Python logging level.
+- `LOG_FILE`: Optional log file path. Leave it empty to log only to stdout or a service journal.
 
-## 注意事项
+## Local Data
 
-- 当前版本面向本地 MVP 使用。
-- 只支持你的 Telegram 用户账号可以访问的公开频道。
-- 不会绕过 Telegram 私有频道权限。
-- 本地数据库只保存排行需要的消息元数据，包括消息 ID、日期、预览文本、链接、爱心数、总反应数和索引时间。
-- 大频道可能触发 Telegram 速率限制，遇到限制时请等待后重试，或先使用较小的索引数量。
+The SQLite database stores only the metadata needed for ranking:
 
-## 本地检查
+- channel ID, username, title, and URL
+- message ID and date
+- text preview
+- message URL
+- heart reaction count
+- total reaction count
+- index timestamps and index job status
+
+The project does not bypass Telegram permissions. It can only read public
+channels that your Telegram user account can access.
+
+## Development Checks
+
+Run the test suite:
 
 ```bash
 PYTHONPATH=src python -m unittest discover -s tests
+```
+
+Compile the source and tests:
+
+```bash
 python -m compileall src tests
 ```
+
+## Notes
+
+- This project is designed for local MVP usage.
+- Very large channels can trigger Telegram rate limits. If Telegram asks you to
+  wait, retry later or index a smaller number of messages first.
+- Do not publish real bot tokens, API hashes, Telethon session files, or local
+  databases.
