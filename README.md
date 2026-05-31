@@ -152,6 +152,11 @@ DAILY_REFRESH_ENABLED=true
 DAILY_REFRESH_TIME=09:00
 DAILY_REFRESH_TIMEZONE=Australia/Sydney
 DAILY_REFRESH_MESSAGE_LIMIT=500
+DAILY_REFRESH_DELAY_MIN_SECONDS=60
+DAILY_REFRESH_DELAY_MAX_SECONDS=180
+DAILY_REFRESH_MAX_ATTEMPTS=3
+DAILY_REFRESH_RETRY_BASE_SECONDS=30
+DAILY_REFRESH_RETRY_MAX_SECONDS=300
 DAILY_REPORT_TARGET_USER_IDS=
 DAILY_REPORT_TOP_LIMIT=10
 ```
@@ -187,6 +192,11 @@ The main settings live in `.env.example`:
 - `DAILY_REFRESH_TIME`: Local daily refresh time in `HH:MM` format.
 - `DAILY_REFRESH_TIMEZONE`: IANA timezone used for the daily refresh time.
 - `DAILY_REFRESH_MESSAGE_LIMIT`: Number of newest messages to refresh per indexed channel.
+- `DAILY_REFRESH_DELAY_MIN_SECONDS`: Minimum random wait after each refreshed channel.
+- `DAILY_REFRESH_DELAY_MAX_SECONDS`: Maximum random wait after each refreshed channel.
+- `DAILY_REFRESH_MAX_ATTEMPTS`: Maximum attempts per channel during daily refresh.
+- `DAILY_REFRESH_RETRY_BASE_SECONDS`: Base retry delay for transient daily refresh failures.
+- `DAILY_REFRESH_RETRY_MAX_SECONDS`: Maximum retry delay for transient daily refresh failures.
 - `DAILY_REPORT_TARGET_USER_IDS`: Optional comma-separated report recipient user IDs.
 - `DAILY_REPORT_TOP_LIMIT`: Number of rows in each daily report ranking section.
 

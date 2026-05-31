@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import html
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -70,14 +71,17 @@ class DailyReportRunner:
         refreshed: list[IndexResult] = []
         failures: list[ChannelRefreshFailure] = []
         logger.info(
-            "Daily refresh started channel_count=%s limit=%s report_limit=%s",
+            "Daily refresh started channel_count=%s limit=%s report_limit=%s channel_delay_seconds=%.1f-%.1f max_attempts=%s",
             len(channels),
             self.settings.daily_refresh_limit,
             self.settings.daily_report_top_limit,
+            self.settings.daily_refresh_delay_min_seconds,
+            self.settings.daily_refresh_delay_max_seconds,
+            self.settings.daily_refresh_max_attempts,
         )
 
         async with self.index_lock:
-            for channel in channels:
+            for index, channel in enumerate(channels):
                 title = str(channel.get("title") or channel.get("username") or "")
                 reference = str(channel.get("username") or channel.get("url") or "")
                 if not reference:
@@ -90,9 +94,9 @@ class DailyReportRunner:
                     )
                     continue
                 try:
-                    result = await self.indexer.index_channel(
-                        reference,
-                        limit=self.settings.daily_refresh_limit,
+                    result = await self._refresh_channel_with_retries(
+                        title=title,
+                        reference=reference,
                     )
                     refreshed.append(result)
                     logger.info(
@@ -102,17 +106,6 @@ class DailyReportRunner:
                         result.scanned,
                         result.stored,
                         result.with_reactions,
-                    )
-                except FloodWaitError as exc:
-                    error = f"Telegram flood wait: retry after {exc.seconds} seconds"
-                    failures.append(
-                        ChannelRefreshFailure(title=title, reference=reference, error=error)
-                    )
-                    logger.warning(
-                        "Daily channel refresh flood wait title=%r reference=%s retry_after_seconds=%s",
-                        title,
-                        reference,
-                        exc.seconds,
                     )
                 except (RPCError, ValueError, OSError) as exc:
                     failures.append(
@@ -142,6 +135,16 @@ class DailyReportRunner:
                         title,
                         reference,
                     )
+                if index < len(channels) - 1:
+                    delay = _random_channel_delay_seconds(self.settings)
+                    if delay > 0:
+                        logger.info(
+                            "Daily refresh spacing delay seconds=%.1f completed_channel=%r next_channel_index=%s",
+                            delay,
+                            title,
+                            index + 2,
+                        )
+                        await asyncio.sleep(delay)
 
         finished_at = utc_now()
         weekly_top = self.db.get_global_top_messages(
@@ -171,6 +174,60 @@ class DailyReportRunner:
         if send_report:
             await self.send_report(report)
         return report
+
+    async def _refresh_channel_with_retries(
+        self,
+        *,
+        title: str,
+        reference: str,
+    ) -> IndexResult:
+        max_attempts = self.settings.daily_refresh_max_attempts
+        for attempt in range(1, max_attempts + 1):
+            try:
+                logger.info(
+                    "Daily channel refresh attempt title=%r reference=%s attempt=%s/%s",
+                    title,
+                    reference,
+                    attempt,
+                    max_attempts,
+                )
+                return await self.indexer.index_channel(
+                    reference,
+                    limit=self.settings.daily_refresh_limit,
+                )
+            except ValueError:
+                raise
+            except FloodWaitError as exc:
+                if attempt >= max_attempts:
+                    raise
+                delay = _retry_delay_seconds(self.settings, attempt, flood_wait_seconds=exc.seconds)
+                logger.warning(
+                    "Daily channel refresh retry after flood wait title=%r reference=%s attempt=%s/%s delay_seconds=%.1f telegram_wait_seconds=%s",
+                    title,
+                    reference,
+                    attempt,
+                    max_attempts,
+                    delay,
+                    exc.seconds,
+                )
+                await asyncio.sleep(delay)
+            except (RPCError, OSError, TimeoutError) as exc:
+                if attempt >= max_attempts:
+                    raise
+                delay = _retry_delay_seconds(self.settings, attempt)
+                logger.warning(
+                    "Daily channel refresh retry title=%r reference=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                    title,
+                    reference,
+                    attempt,
+                    max_attempts,
+                    delay,
+                    exc,
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+
+        raise RuntimeError("unreachable daily refresh retry state")
 
     async def send_report(self, report: DailyReport) -> None:
         target_ids = (
@@ -308,6 +365,34 @@ def _seconds_until_next_run(target_time: time, timezone: ZoneInfo) -> float:
     if next_run <= now:
         next_run += timedelta(days=1)
     return max(1.0, (next_run - now).total_seconds())
+
+
+def _random_channel_delay_seconds(settings: Settings) -> float:
+    if settings.daily_refresh_delay_max_seconds <= 0:
+        return 0.0
+    if (
+        settings.daily_refresh_delay_min_seconds
+        == settings.daily_refresh_delay_max_seconds
+    ):
+        return settings.daily_refresh_delay_min_seconds
+    return random.uniform(
+        settings.daily_refresh_delay_min_seconds,
+        settings.daily_refresh_delay_max_seconds,
+    )
+
+
+def _retry_delay_seconds(
+    settings: Settings,
+    attempt: int,
+    *,
+    flood_wait_seconds: int | None = None,
+) -> float:
+    if flood_wait_seconds is not None:
+        base = float(flood_wait_seconds)
+    else:
+        base = settings.daily_refresh_retry_base_seconds * (2 ** max(0, attempt - 1))
+    jitter = random.uniform(0, min(10.0, max(0.0, base * 0.25)))
+    return min(settings.daily_refresh_retry_max_seconds, base + jitter)
 
 
 def _html(value: object) -> str:

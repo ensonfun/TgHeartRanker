@@ -28,6 +28,11 @@ class Settings:
     daily_refresh_limit: int
     daily_report_target_user_ids: frozenset[int]
     daily_report_top_limit: int
+    daily_refresh_delay_min_seconds: float
+    daily_refresh_delay_max_seconds: float
+    daily_refresh_max_attempts: int
+    daily_refresh_retry_base_seconds: float
+    daily_refresh_retry_max_seconds: float
 
     def prepare_filesystem(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,6 +53,20 @@ def load_settings() -> Settings:
         api_id = int(api_id_raw)
     except ValueError as exc:
         raise RuntimeError("TELEGRAM_API_ID must be an integer.") from exc
+
+    delay_min = _float_env("DAILY_REFRESH_DELAY_MIN_SECONDS", 60.0, minimum=0.0)
+    delay_max = _float_env("DAILY_REFRESH_DELAY_MAX_SECONDS", 180.0, minimum=0.0)
+    if delay_max < delay_min:
+        raise RuntimeError(
+            "DAILY_REFRESH_DELAY_MAX_SECONDS must be >= DAILY_REFRESH_DELAY_MIN_SECONDS."
+        )
+
+    retry_base = _float_env("DAILY_REFRESH_RETRY_BASE_SECONDS", 30.0, minimum=0.0)
+    retry_max = _float_env("DAILY_REFRESH_RETRY_MAX_SECONDS", 300.0, minimum=0.0)
+    if retry_max < retry_base:
+        raise RuntimeError(
+            "DAILY_REFRESH_RETRY_MAX_SECONDS must be >= DAILY_REFRESH_RETRY_BASE_SECONDS."
+        )
 
     settings = Settings(
         api_id=api_id,
@@ -79,6 +98,11 @@ def load_settings() -> Settings:
             os.environ.get("DAILY_REPORT_TARGET_USER_IDS", "")
         ),
         daily_report_top_limit=_int_env("DAILY_REPORT_TOP_LIMIT", 10, minimum=1),
+        daily_refresh_delay_min_seconds=delay_min,
+        daily_refresh_delay_max_seconds=delay_max,
+        daily_refresh_max_attempts=_int_env("DAILY_REFRESH_MAX_ATTEMPTS", 3, minimum=1),
+        daily_refresh_retry_base_seconds=retry_base,
+        daily_refresh_retry_max_seconds=retry_max,
     )
     settings.prepare_filesystem()
     return settings
