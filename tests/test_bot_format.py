@@ -6,6 +6,8 @@ from datetime import timedelta
 from tg_heart_ranker.bot import (
     _format_top_messages,
     _index_is_stale,
+    _parse_global_args,
+    _parse_new_args,
     _parse_url_limit_args,
     _parse_rank_callback_data,
     _rank_callback_data,
@@ -39,7 +41,7 @@ class BotFormatTest(unittest.TestCase):
         self.assertIn("<b>A &lt;Channel&gt;</b>", text)
         self.assertIn(
             '<a href="https://t.me/example/10?x=1&amp;y=2">'
-            "#01  ❤ 19  ·  2026-04-13\n"
+            "#01  表情 20  ·  2026-04-13\n"
             "hello &lt;world&gt;</a>",
             text,
         )
@@ -74,6 +76,12 @@ class BotFormatTest(unittest.TestCase):
 
         self.assertEqual(defaulted.limit, 5000)
         self.assertEqual(explicit_all.limit, 0)
+
+    def test_global_and_new_args(self) -> None:
+        self.assertEqual(_parse_global_args(""), (10, "week"))
+        self.assertEqual(_parse_global_args("20 month"), (20, "month"))
+        self.assertEqual(_parse_new_args(""), (10, 1))
+        self.assertEqual(_parse_new_args("20 7"), (20, 7))
 
 
 if __name__ == "__main__":

@@ -26,12 +26,19 @@ CREATE TABLE IF NOT EXISTS messages (
   heart_count INTEGER NOT NULL DEFAULT 0,
   total_reactions INTEGER NOT NULL DEFAULT 0,
   indexed_at TEXT NOT NULL,
+  first_indexed_at TEXT NOT NULL,
   PRIMARY KEY (channel_id, message_id),
   FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_rank
 ON messages(channel_id, heart_count DESC, date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_messages_total_reactions_rank
+ON messages(channel_id, total_reactions DESC, date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_messages_global_total_reactions_rank
+ON messages(total_reactions DESC, date DESC);
 
 CREATE TABLE IF NOT EXISTS indexes (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -53,6 +60,35 @@ class Database:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
+            self._migrate(conn)
+
+    def _migrate(self, conn: sqlite3.Connection) -> None:
+        columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+        }
+        if "first_indexed_at" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN first_indexed_at TEXT")
+            conn.execute(
+                """
+                UPDATE messages
+                SET first_indexed_at = indexed_at
+                WHERE first_indexed_at IS NULL OR first_indexed_at = ''
+                """
+            )
+        conn.execute(
+            """
+            UPDATE messages
+            SET first_indexed_at = indexed_at
+            WHERE first_indexed_at IS NULL OR first_indexed_at = ''
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_first_indexed_at
+            ON messages(first_indexed_at)
+            """
+        )
 
     def upsert_channel(
         self, channel: ChannelInfo, last_indexed_at: datetime | None = None
@@ -99,16 +135,18 @@ class Database:
                   url,
                   heart_count,
                   total_reactions,
-                  indexed_at
+                  indexed_at,
+                  first_indexed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id, message_id) DO UPDATE SET
                   date = excluded.date,
                   text_preview = excluded.text_preview,
                   url = excluded.url,
                   heart_count = excluded.heart_count,
                   total_reactions = excluded.total_reactions,
-                  indexed_at = excluded.indexed_at
+                  indexed_at = excluded.indexed_at,
+                  first_indexed_at = messages.first_indexed_at
                 """,
                 (
                     message.channel_id,
@@ -119,6 +157,7 @@ class Database:
                     message.heart_count,
                     message.total_reactions,
                     _to_iso(message.indexed_at),
+                    _to_iso(message.first_indexed_at or message.indexed_at),
                 ),
             )
 
@@ -169,9 +208,9 @@ class Database:
                 f"""
                 SELECT *
                 FROM messages
-                WHERE channel_id = ? AND heart_count > 0
+                WHERE channel_id = ? AND total_reactions > 0
                 {since_filter}
-                ORDER BY heart_count DESC, date DESC
+                ORDER BY total_reactions DESC, date DESC
                 LIMIT ?
                 OFFSET ?
                 """,
@@ -194,7 +233,7 @@ class Database:
                 f"""
                 SELECT COUNT(*) AS count
                 FROM messages
-                WHERE channel_id = ? AND heart_count > 0
+                WHERE channel_id = ? AND total_reactions > 0
                 {since_filter}
                 """,
                 params,
@@ -208,6 +247,56 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def list_indexed_channels(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                  c.*,
+                  COUNT(m.message_id) AS indexed_messages,
+                  COALESCE(MAX(m.indexed_at), '') AS latest_message_indexed_at
+                FROM channels c
+                JOIN messages m ON m.channel_id = c.id
+                GROUP BY c.id
+                ORDER BY COALESCE(c.last_indexed_at, '') ASC, c.title ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_global_top_messages(
+        self,
+        *,
+        limit: int,
+        since: datetime | None = None,
+        first_indexed_since: datetime | None = None,
+    ) -> list[RankedMessage]:
+        filters = ["m.total_reactions > 0"]
+        params: list[object] = []
+        if since:
+            filters.append("m.date >= ?")
+            params.append(_to_iso(since))
+        if first_indexed_since:
+            filters.append("m.first_indexed_at >= ?")
+            params.append(_to_iso(first_indexed_since))
+        params.append(limit)
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT
+                  m.*,
+                  c.title AS channel_title,
+                  c.username AS channel_username
+                FROM messages m
+                JOIN channels c ON c.id = m.channel_id
+                WHERE {" AND ".join(filters)}
+                ORDER BY m.total_reactions DESC, m.date DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [_ranked_message_from_row(row) for row in rows]
+
     def get_status(self, channel_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:
             channel = conn.execute(
@@ -215,8 +304,8 @@ class Database:
                 SELECT
                   c.*,
                   COUNT(m.message_id) AS indexed_messages,
-                  COALESCE(SUM(CASE WHEN m.heart_count > 0 THEN 1 ELSE 0 END), 0)
-                    AS messages_with_hearts,
+                  COALESCE(SUM(CASE WHEN m.total_reactions > 0 THEN 1 ELSE 0 END), 0)
+                    AS messages_with_reactions,
                   COALESCE(MAX(m.indexed_at), '') AS latest_message_indexed_at
                 FROM channels c
                 LEFT JOIN messages m ON m.channel_id = c.id
@@ -271,4 +360,11 @@ def _ranked_message_from_row(row: sqlite3.Row) -> RankedMessage:
         heart_count=int(row["heart_count"]),
         total_reactions=int(row["total_reactions"]),
         indexed_at=str(row["indexed_at"]),
+        first_indexed_at=str(row["first_indexed_at"]),
+        channel_title=str(row["channel_title"]) if "channel_title" in row.keys() else "",
+        channel_username=(
+            str(row["channel_username"])
+            if "channel_username" in row.keys() and row["channel_username"] is not None
+            else None
+        ),
     )

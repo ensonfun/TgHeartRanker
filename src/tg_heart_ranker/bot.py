@@ -12,6 +12,7 @@ from telethon import Button, TelegramClient, events
 from telethon.errors import FloodWaitError, RPCError
 
 from .config import Settings, load_settings
+from .daily import DailyReportRunner, format_daily_report, format_global_ranked_messages
 from .db import Database, utc_now
 from .indexer import ChannelIndexer
 from .models import IndexResult, RankedMessage
@@ -28,11 +29,16 @@ Commands:
 /index <channel_url> [message_limit]
 /top <channel_url> [limit]
 /status <channel_url>
+/daily
+/global [limit] [week|month|year|all]
+/new [limit] [days]
 
 Examples:
 /rank https://t.me/some_public_channel 10
 /index https://t.me/some_public_channel 500
 /top @some_public_channel 10
+/global 10 week
+/new 10 1
 """
 
 
@@ -62,6 +68,13 @@ class HeartRankerBot:
             request_sleep_seconds=settings.request_sleep_seconds,
         )
         self.index_lock = asyncio.Lock()
+        self.daily_runner = DailyReportRunner(
+            settings,
+            db,
+            self.indexer,
+            bot_client,
+            self.index_lock,
+        )
 
     def register_handlers(self) -> None:
         self.bot_client.add_event_handler(
@@ -109,6 +122,12 @@ class HeartRankerBot:
                 await self._handle_rank(event, args)
             elif command == "/status":
                 await self._handle_status(event, args)
+            elif command == "/daily":
+                await self._handle_daily(event)
+            elif command == "/global":
+                await self._handle_global(event, args)
+            elif command == "/new":
+                await self._handle_new(event, args)
             else:
                 await event.respond(HELP_TEXT, parse_mode=None)
         except ValueError as exc:
@@ -241,14 +260,14 @@ class HeartRankerBot:
             parse_mode=None,
         )
 
-        async def progress(scanned: int, stored: int, with_hearts: int) -> None:
+        async def progress(scanned: int, stored: int, with_reactions: int) -> None:
             await _safe_edit(
                 progress_message,
                 (
                     "Indexing...\n"
                     f"Scanned: {scanned}\n"
                     f"Stored: {stored}\n"
-                    f"Posts with hearts: {with_hearts}"
+                    f"Posts with reactions: {with_reactions}"
                 ),
             )
 
@@ -260,12 +279,12 @@ class HeartRankerBot:
             )
 
         logger.info(
-            "Index command completed sender_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s",
+            "Index command completed sender_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s",
             event.sender_id,
             result.channel.id,
             result.scanned,
             result.stored,
-            result.with_hearts,
+            result.with_reactions,
         )
         await _safe_edit(progress_message, _format_index_result(result))
         await _send_ranked_page(event, self.db, result.channel.id, result.channel.title, 10)
@@ -325,14 +344,14 @@ class HeartRankerBot:
                 parse_mode=None,
             )
 
-            async def progress(scanned: int, stored: int, with_hearts: int) -> None:
+            async def progress(scanned: int, stored: int, with_reactions: int) -> None:
                 await _safe_edit(
                     progress_message,
                     (
                         f"Refreshing {channel.title} before ranking...\n"
                         f"Scanned: {scanned}\n"
                         f"Stored: {stored}\n"
-                        f"Posts with hearts: {with_hearts}"
+                        f"Posts with reactions: {with_reactions}"
                     ),
                 )
 
@@ -343,12 +362,12 @@ class HeartRankerBot:
                     progress_callback=progress,
                 )
             logger.info(
-                "Rank refresh completed sender_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s",
+                "Rank refresh completed sender_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s",
                 event.sender_id,
                 result.channel.id,
                 result.scanned,
                 result.stored,
-                result.with_hearts,
+                result.with_reactions,
             )
             await _safe_edit(
                 progress_message,
@@ -356,7 +375,7 @@ class HeartRankerBot:
                     f"Refreshed {result.channel.title}\n"
                     f"Scanned: {result.scanned}\n"
                     f"Stored: {result.stored}\n"
-                    f"Posts with hearts: {result.with_hearts}"
+                    f"Posts with reactions: {result.with_reactions}"
                 ),
             )
         else:
@@ -373,7 +392,7 @@ class HeartRankerBot:
                 parsed.period,
             )
             message = (
-                f"No heart reactions were found for {channel.title} "
+                f"No reactions were found for {channel.title} "
                 f"({_period_label(parsed.period)})."
             )
             if progress_message:
@@ -427,6 +446,59 @@ class HeartRankerBot:
             channel.id,
         )
 
+    async def _handle_daily(self, event: events.NewMessage.Event) -> None:
+        if self.index_lock.locked():
+            await event.respond("An index job is already running. Try again later.")
+            return
+        progress_message = await event.respond(
+            "Daily refresh started. I will refresh indexed channels and send the report here.",
+            parse_mode=None,
+        )
+        report = await self.daily_runner.run_once(send_report=False)
+        await _safe_edit(
+            progress_message,
+            (
+                "Daily refresh finished.\n"
+                f"Refreshed: {len(report.refreshed)}\n"
+                f"Failed: {len(report.failures)}\n"
+                f"Weekly ranking rows: {len(report.weekly_top)}\n"
+                f"New ranking rows: {len(report.newly_indexed_top)}"
+            ),
+        )
+        await _send_long_message(event, format_daily_report(report), parse_mode="html")
+
+    async def _handle_global(
+        self, event: events.NewMessage.Event, args: str
+    ) -> None:
+        limit, period = _parse_global_args(args)
+        since = _period_since(period)
+        rows = self.db.get_global_top_messages(limit=limit, since=since)
+        await _send_long_message(
+            event,
+            format_global_ranked_messages(
+                f"跨频道互动排行 · {_period_label(period)}",
+                rows,
+            ),
+            parse_mode="html",
+        )
+
+    async def _handle_new(
+        self, event: events.NewMessage.Event, args: str
+    ) -> None:
+        limit, days = _parse_new_args(args)
+        rows = self.db.get_global_top_messages(
+            limit=limit,
+            first_indexed_since=utc_now() - timedelta(days=days),
+        )
+        await _send_long_message(
+            event,
+            format_global_ranked_messages(
+                f"新增入库互动排行 · 近 {days} 天",
+                rows,
+            ),
+            parse_mode="html",
+        )
+
     def _is_allowed(self, sender_id: int | None) -> bool:
         if not self.settings.allowed_user_ids:
             return True
@@ -475,11 +547,14 @@ async def run() -> None:
 
     app = HeartRankerBot(settings, db, user_client, bot_client)
     app.register_handlers()
+    if settings.daily_refresh_enabled:
+        app.daily_runner.start()
 
     logger.info("Telegram Heart Ranker is running")
     try:
         await bot_client.run_until_disconnected()
     finally:
+        await app.daily_runner.stop()
         logger.info("Disconnecting Telegram clients")
         await bot_client.disconnect()
         await user_client.disconnect()
@@ -573,7 +648,11 @@ async def _safe_edit(message: object, text: str) -> None:
 
 
 async def _send_long_message(
-    event: events.NewMessage.Event, text: str, *, chunk_size: int = 3900
+    event: events.NewMessage.Event,
+    text: str,
+    *,
+    parse_mode: str | None = None,
+    chunk_size: int = 3900,
 ) -> None:
     remaining = text
     while remaining:
@@ -581,7 +660,7 @@ async def _send_long_message(
         split_at = chunk.rfind("\n\n")
         if split_at > 0 and len(remaining) > chunk_size:
             chunk = remaining[:split_at]
-        await event.respond(chunk, parse_mode=None)
+        await event.respond(chunk, parse_mode=parse_mode)
         remaining = remaining[len(chunk) :].lstrip()
 
 
@@ -663,7 +742,7 @@ def _format_index_result(result: IndexResult) -> str:
         f"Indexed {result.channel.title}\n"
         f"Scanned: {result.scanned}\n"
         f"Stored: {result.stored}\n"
-        f"Posts with hearts: {result.with_hearts}\n"
+        f"Posts with reactions: {result.with_reactions}\n"
         f"Finished: {result.finished_at.isoformat()}"
     )
 
@@ -704,7 +783,7 @@ def _format_top_messages(
         date = row.date[:10]
         preview = _html(row.text_preview or "(no text)")
         url = html.escape(row.url, quote=True)
-        item = f"#{rank:02d}  ❤ {row.heart_count}  ·  {date}\n{preview}"
+        item = f"#{rank:02d}  表情 {row.total_reactions}  ·  {date}\n{preview}"
         lines.append(
             f'\n<a href="{url}">{item}</a>'
         )
@@ -757,6 +836,11 @@ def _normalize_period(value: str) -> str | None:
     aliases = {
         "all": "all",
         "全部": "all",
+        "week": "week",
+        "1w": "week",
+        "7d": "week",
+        "周": "week",
+        "近一周": "week",
         "month": "month",
         "1m": "month",
         "30d": "month",
@@ -772,6 +856,8 @@ def _normalize_period(value: str) -> str | None:
 
 
 def _period_since(period: str):
+    if period == "week":
+        return utc_now() - timedelta(days=7)
     if period == "month":
         return utc_now() - timedelta(days=30)
     if period == "year":
@@ -780,6 +866,8 @@ def _period_since(period: str):
 
 
 def _period_label(period: str) -> str:
+    if period == "week":
+        return "近 1 周"
     if period == "month":
         return "近 1 个月"
     if period == "year":
@@ -799,6 +887,36 @@ def _period_button_label(button_period: str, active_period: str) -> str:
     return label
 
 
+def _parse_global_args(args: str) -> tuple[int, str]:
+    tokens = args.split()
+    limit = 10
+    period = "week"
+    if tokens and tokens[0].isdigit():
+        limit = int(tokens.pop(0))
+    if tokens:
+        normalized_period = _normalize_period(tokens[0])
+        if not normalized_period:
+            raise ValueError("Usage: /global [limit] [week|month|year|all]")
+        period = normalized_period
+    limit = max(1, min(limit, 50))
+    return limit, period
+
+
+def _parse_new_args(args: str) -> tuple[int, int]:
+    tokens = args.split()
+    limit = 10
+    days = 1
+    if tokens and tokens[0].isdigit():
+        limit = int(tokens.pop(0))
+    if tokens and tokens[0].isdigit():
+        days = int(tokens.pop(0))
+    if tokens:
+        raise ValueError("Usage: /new [limit] [days]")
+    limit = max(1, min(limit, 50))
+    days = max(1, min(days, 30))
+    return limit, days
+
+
 def _html(value: object) -> str:
     return html.escape(str(value), quote=False)
 
@@ -812,7 +930,7 @@ def _format_status(status: dict[str, object]) -> str:
         f"Status for {status.get('title')}\n"
         f"URL: {status.get('url')}\n"
         f"Indexed messages: {status.get('indexed_messages')}\n"
-        f"Messages with hearts: {status.get('messages_with_hearts')}\n"
+        f"Messages with reactions: {status.get('messages_with_reactions')}\n"
         f"Last successful index: {status.get('last_indexed_at') or 'never'}\n"
         f"Latest job: {latest_index.get('status', 'none')}\n"
         f"Latest job error: {latest_index.get('error') or 'none'}"

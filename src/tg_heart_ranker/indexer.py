@@ -78,7 +78,7 @@ class ChannelIndexer:
 
         scanned = 0
         stored = 0
-        with_hearts = 0
+        with_reactions = 0
         try:
             iter_limit = limit if limit > 0 else None
             async for message in self.user_client.iter_messages(
@@ -92,8 +92,8 @@ class ChannelIndexer:
                 heart_count, total_reactions = extract_reaction_counts(
                     getattr(message, "reactions", None)
                 )
-                if heart_count > 0:
-                    with_hearts += 1
+                if total_reactions > 0:
+                    with_reactions += 1
 
                 record = MessageRecord(
                     channel_id=channel.id,
@@ -112,14 +112,14 @@ class ChannelIndexer:
                 stored += 1
 
                 if progress_callback and scanned % self.progress_every == 0:
-                    await progress_callback(scanned, stored, with_hearts)
+                    await progress_callback(scanned, stored, with_reactions)
                     logger.info(
-                        "Index job progress index_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s",
+                        "Index job progress index_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s",
                         index_id,
                         channel.id,
                         scanned,
                         stored,
-                        with_hearts,
+                        with_reactions,
                     )
                 if self.request_sleep_seconds and scanned % 200 == 0:
                     await asyncio.sleep(self.request_sleep_seconds)
@@ -129,12 +129,12 @@ class ChannelIndexer:
             error = f"Telegram flood wait: retry after {exc.seconds} seconds."
             self.db.finish_index(index_id, "failed", finished_at, error)
             logger.warning(
-                "Index job failed on Telegram flood wait index_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s retry_after_seconds=%s",
+                "Index job failed on Telegram flood wait index_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s retry_after_seconds=%s",
                 index_id,
                 channel.id,
                 scanned,
                 stored,
-                with_hearts,
+                with_reactions,
                 exc.seconds,
             )
             raise
@@ -142,12 +142,12 @@ class ChannelIndexer:
             finished_at = utc_now()
             self.db.finish_index(index_id, "failed", finished_at, str(exc))
             logger.exception(
-                "Index job failed index_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s",
+                "Index job failed index_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s",
                 index_id,
                 channel.id,
                 scanned,
                 stored,
-                with_hearts,
+                with_reactions,
             )
             raise
 
@@ -155,19 +155,19 @@ class ChannelIndexer:
         self.db.finish_index(index_id, "success", finished_at)
         self.db.mark_channel_indexed(channel.id, finished_at)
         logger.info(
-            "Index job finished index_id=%s channel_id=%s scanned=%s stored=%s with_hearts=%s duration_seconds=%.3f",
+            "Index job finished index_id=%s channel_id=%s scanned=%s stored=%s with_reactions=%s duration_seconds=%.3f",
             index_id,
             channel.id,
             scanned,
             stored,
-            with_hearts,
+            with_reactions,
             (finished_at - started_at).total_seconds(),
         )
         return IndexResult(
             channel=channel,
             scanned=scanned,
             stored=stored,
-            with_hearts=with_hearts,
+            with_reactions=with_reactions,
             started_at=started_at,
             finished_at=finished_at,
         )

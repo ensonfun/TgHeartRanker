@@ -22,6 +22,7 @@ class MessageRecord:
     heart_count: int
     total_reactions: int
     indexed_at: datetime
+    first_indexed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,9 @@ class RankedMessage:
     heart_count: int
     total_reactions: int
     indexed_at: str
+    first_indexed_at: str = ""
+    channel_title: str = ""
+    channel_username: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,6 @@ class IndexResult:
     channel: ChannelInfo
     scanned: int
     stored: int
-    with_hearts: int
+    with_reactions: int
     started_at: datetime
     finished_at: datetime

@@ -1,4 +1,4 @@
-"""Telegram channel heart-reaction ranking MVP."""
+"""Telegram channel reaction ranking MVP."""
 
 __all__ = ["__version__"]
 

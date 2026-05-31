@@ -1,7 +1,7 @@
 # Telegram Heart Ranker
 
 Telegram Heart Ranker is a local Telegram bot that ranks public channel posts by
-their heart reactions. It reads channel history through your Telegram user
+their total Telegram reactions. It reads channel history through your Telegram user
 session, stores message metadata in SQLite, and exposes rankings through bot
 commands.
 
@@ -11,7 +11,7 @@ arbitrary public channel link and backfill historical messages on its own.
 
 ## Features
 
-- Rank public Telegram channel posts by heart reaction count.
+- Rank public Telegram channel posts by total reaction count across all emojis.
 - Accept public channel links and `@username` references.
 - Cache indexed messages in a local SQLite database.
 - Page through ranking results with `First`, `Prev`, `Next`, and `Last` buttons.
@@ -92,6 +92,9 @@ use the bot. Multiple IDs can be separated with commas.
 /index <channel_url> [message_limit]
 /top <channel_url> [limit] [all|month|year]
 /status <channel_url>
+/daily
+/global [limit] [week|month|year|all]
+/new [limit] [days]
 ```
 
 Examples:
@@ -103,6 +106,9 @@ Examples:
 /index https://t.me/some_public_channel 500
 /top @some_public_channel 10
 /status @some_public_channel
+/daily
+/global 10 week
+/new 10 1
 ```
 
 `/rank` is the main command. It refreshes the local index when needed and then
@@ -130,6 +136,36 @@ an initial index using `INDEX_MESSAGE_LIMIT`. If the channel already has local
 data and the cache is older than 24 hours, the bot refreshes only the newest
 `RANK_REFRESH_MESSAGE_LIMIT` messages before ranking.
 
+## Daily Refresh Reports
+
+The bot can refresh every indexed channel once per day and push a report to the
+configured Telegram users. The report contains two sections:
+
+- the top posts published in the last 7 days across all indexed channels
+- the top posts first discovered during that refresh run
+
+The daily task runs inside the bot process and reuses the same Telegram sessions.
+Use `/daily` to trigger the same refresh and report manually.
+
+```env
+DAILY_REFRESH_ENABLED=true
+DAILY_REFRESH_TIME=09:00
+DAILY_REFRESH_TIMEZONE=Australia/Sydney
+DAILY_REFRESH_MESSAGE_LIMIT=500
+DAILY_REPORT_TARGET_USER_IDS=
+DAILY_REPORT_TOP_LIMIT=10
+```
+
+If `DAILY_REPORT_TARGET_USER_IDS` is empty, reports are sent to
+`TELEGRAM_ALLOWED_USER_IDS`.
+
+You can also query cross-channel rankings manually:
+
+```text
+/global 10 week
+/new 10 1
+```
+
 ## Configuration
 
 The main settings live in `.env.example`:
@@ -147,6 +183,12 @@ The main settings live in `.env.example`:
 - `INDEX_REQUEST_SLEEP_SECONDS`: Small pause between batches to reduce pressure on Telegram.
 - `LOG_LEVEL`: Python logging level.
 - `LOG_FILE`: Optional log file path. Leave it empty to log only to stdout or a service journal.
+- `DAILY_REFRESH_ENABLED`: Enable or disable the built-in daily refresh task.
+- `DAILY_REFRESH_TIME`: Local daily refresh time in `HH:MM` format.
+- `DAILY_REFRESH_TIMEZONE`: IANA timezone used for the daily refresh time.
+- `DAILY_REFRESH_MESSAGE_LIMIT`: Number of newest messages to refresh per indexed channel.
+- `DAILY_REPORT_TARGET_USER_IDS`: Optional comma-separated report recipient user IDs.
+- `DAILY_REPORT_TOP_LIMIT`: Number of rows in each daily report ranking section.
 
 ## Local Data
 
@@ -158,6 +200,7 @@ The SQLite database stores only the metadata needed for ranking:
 - message URL
 - heart reaction count
 - total reaction count
+- first indexed timestamp
 - index timestamps and index job status
 
 The project does not bypass Telegram permissions. It can only read public

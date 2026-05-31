@@ -22,6 +22,12 @@ class Settings:
     request_sleep_seconds: float
     log_level: str
     log_file: Path | None
+    daily_refresh_enabled: bool
+    daily_refresh_time: str
+    daily_refresh_timezone: str
+    daily_refresh_limit: int
+    daily_report_target_user_ids: frozenset[int]
+    daily_report_top_limit: int
 
     def prepare_filesystem(self) -> None:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +67,18 @@ def load_settings() -> Settings:
         ),
         log_level=os.environ.get("LOG_LEVEL", "INFO").strip() or "INFO",
         log_file=_optional_path_env("LOG_FILE", "logs/tg_heart_ranker.log"),
+        daily_refresh_enabled=_bool_env("DAILY_REFRESH_ENABLED", True),
+        daily_refresh_time=os.environ.get("DAILY_REFRESH_TIME", "09:00").strip()
+        or "09:00",
+        daily_refresh_timezone=os.environ.get(
+            "DAILY_REFRESH_TIMEZONE", "Australia/Sydney"
+        ).strip()
+        or "Australia/Sydney",
+        daily_refresh_limit=_int_env("DAILY_REFRESH_MESSAGE_LIMIT", 500, minimum=0),
+        daily_report_target_user_ids=_parse_allowed_user_ids(
+            os.environ.get("DAILY_REPORT_TARGET_USER_IDS", "")
+        ),
+        daily_report_top_limit=_int_env("DAILY_REPORT_TOP_LIMIT", 10, minimum=1),
     )
     settings.prepare_filesystem()
     return settings
@@ -104,6 +122,15 @@ def _float_env(name: str, default: float, minimum: float) -> float:
     if value < minimum:
         raise RuntimeError(f"{name} must be >= {minimum}.")
     return value
+
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name, str(default)).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    raise RuntimeError(f"{name} must be true or false.")
 
 
 def _parse_allowed_user_ids(raw: str) -> frozenset[int]:
