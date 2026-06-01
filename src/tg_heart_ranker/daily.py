@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from telethon.errors import FloodWaitError, RPCError
+from telethon.errors import (
+    ChannelPrivateError,
+    FloodWaitError,
+    RPCError,
+    UsernameInvalidError,
+    UsernameNotOccupiedError,
+)
 
 from .config import Settings
 from .db import Database, utc_now
@@ -108,6 +114,21 @@ class DailyReportRunner:
                         result.with_reactions,
                     )
                 except (RPCError, ValueError, OSError) as exc:
+                    if _is_permanent_channel_error(exc):
+                        channel_id = int(channel.get("id") or 0)
+                        if channel_id:
+                            self.db.mark_channel_disabled(
+                                channel_id,
+                                when=utc_now(),
+                                reason=str(exc),
+                            )
+                            logger.warning(
+                                "Daily channel disabled after permanent error channel_id=%s title=%r reference=%s error=%s",
+                                channel_id,
+                                title,
+                                reference,
+                                exc,
+                            )
                     failures.append(
                         ChannelRefreshFailure(
                             title=title,
@@ -196,6 +217,8 @@ class DailyReportRunner:
                     limit=self.settings.daily_refresh_limit,
                 )
             except ValueError:
+                raise
+            except (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError):
                 raise
             except FloodWaitError as exc:
                 if attempt >= max_attempts:
@@ -393,6 +416,13 @@ def _retry_delay_seconds(
         base = settings.daily_refresh_retry_base_seconds * (2 ** max(0, attempt - 1))
     jitter = random.uniform(0, min(10.0, max(0.0, base * 0.25)))
     return min(settings.daily_refresh_retry_max_seconds, base + jitter)
+
+
+def _is_permanent_channel_error(exc: Exception) -> bool:
+    return isinstance(
+        exc,
+        (UsernameInvalidError, UsernameNotOccupiedError, ChannelPrivateError),
+    )
 
 
 def _html(value: object) -> str:

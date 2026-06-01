@@ -931,6 +931,8 @@ def _format_status(status: dict[str, object]) -> str:
         f"URL: {status.get('url')}\n"
         f"Indexed messages: {status.get('indexed_messages')}\n"
         f"Messages with reactions: {status.get('messages_with_reactions')}\n"
+        f"Disabled at: {status.get('disabled_at') or 'no'}\n"
+        f"Disabled reason: {status.get('disabled_reason') or 'none'}\n"
         f"Last successful index: {status.get('last_indexed_at') or 'never'}\n"
         f"Latest job: {latest_index.get('status', 'none')}\n"
         f"Latest job error: {latest_index.get('error') or 'none'}"

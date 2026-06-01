@@ -146,6 +146,10 @@ configured Telegram users. The report contains two sections:
 
 The daily task runs inside the bot process and reuses the same Telegram sessions.
 Use `/daily` to trigger the same refresh and report manually.
+If a channel becomes permanently unavailable, for example its username no
+longer exists or the account can no longer access it, the bot marks that
+channel disabled and skips it in future daily refreshes. Historical messages
+remain in the database and can still appear in rankings.
 
 ```env
 DAILY_REFRESH_ENABLED=true

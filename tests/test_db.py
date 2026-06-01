@@ -104,6 +104,53 @@ class DatabaseTest(unittest.TestCase):
             self.assertEqual(status["indexed_messages"], 4)
             self.assertEqual(status["messages_with_reactions"], 4)
 
+    def test_disabled_channels_are_excluded_from_daily_refresh_list(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "ranker.sqlite3")
+            db.initialize()
+            active = ChannelInfo(
+                id=100,
+                username="active_channel",
+                title="Active Channel",
+                url="https://t.me/active_channel",
+            )
+            disabled = ChannelInfo(
+                id=200,
+                username="disabled_channel",
+                title="Disabled Channel",
+                url="https://t.me/disabled_channel",
+            )
+            now = datetime.now(timezone.utc)
+            db.upsert_channel(active)
+            db.upsert_channel(disabled)
+            for channel_id in (100, 200):
+                db.upsert_message(
+                    MessageRecord(
+                        channel_id=channel_id,
+                        message_id=1,
+                        date=now,
+                        text_preview="message",
+                        url=f"https://t.me/channel/{channel_id}",
+                        heart_count=1,
+                        total_reactions=1,
+                        indexed_at=now,
+                    )
+                )
+
+            db.mark_channel_disabled(
+                200,
+                when=now,
+                reason="Nobody is using this username",
+            )
+
+            channels = db.list_indexed_channels()
+            self.assertEqual([channel["id"] for channel in channels], [100])
+            status = db.get_status(200)
+            self.assertEqual(status["disabled_reason"], "Nobody is using this username")
+
+            db.upsert_channel(disabled)
+            self.assertIsNone(db.get_status(200)["disabled_at"])
+
     def test_first_indexed_at_is_preserved_on_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "ranker.sqlite3")

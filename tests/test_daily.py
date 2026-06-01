@@ -5,9 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tg_heart_ranker.daily import (
+    _is_permanent_channel_error,
     _random_channel_delay_seconds,
     _retry_delay_seconds,
 )
+from telethon.errors import ChannelPrivateError, UsernameInvalidError
 
 
 class DailySchedulingTest(unittest.TestCase):
@@ -52,6 +54,19 @@ class DailySchedulingTest(unittest.TestCase):
                 _retry_delay_seconds(settings, 1, flood_wait_seconds=90),
                 95.0,
             )
+
+    def test_permanent_channel_errors_are_detected(self) -> None:
+        self.assertTrue(
+            _is_permanent_channel_error(
+                UsernameInvalidError(request=None)
+            )
+        )
+        self.assertTrue(
+            _is_permanent_channel_error(
+                ChannelPrivateError(request=None)
+            )
+        )
+        self.assertFalse(_is_permanent_channel_error(OSError("temporary")))
 
 
 if __name__ == "__main__":

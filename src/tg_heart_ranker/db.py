@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS channels (
   username TEXT,
   title TEXT NOT NULL,
   url TEXT NOT NULL,
-  last_indexed_at TEXT
+  last_indexed_at TEXT,
+  disabled_at TEXT,
+  disabled_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -63,6 +65,15 @@ class Database:
             self._migrate(conn)
 
     def _migrate(self, conn: sqlite3.Connection) -> None:
+        channel_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(channels)").fetchall()
+        }
+        if "disabled_at" not in channel_columns:
+            conn.execute("ALTER TABLE channels ADD COLUMN disabled_at TEXT")
+        if "disabled_reason" not in channel_columns:
+            conn.execute("ALTER TABLE channels ADD COLUMN disabled_reason TEXT")
+
         columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(messages)").fetchall()
@@ -96,8 +107,16 @@ class Database:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO channels (id, username, title, url, last_indexed_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO channels (
+                  id,
+                  username,
+                  title,
+                  url,
+                  last_indexed_at,
+                  disabled_at,
+                  disabled_reason
+                )
+                VALUES (?, ?, ?, ?, ?, NULL, NULL)
                 ON CONFLICT(id) DO UPDATE SET
                   username = excluded.username,
                   title = excluded.title,
@@ -105,7 +124,9 @@ class Database:
                   last_indexed_at = COALESCE(
                     excluded.last_indexed_at,
                     channels.last_indexed_at
-                  )
+                  ),
+                  disabled_at = NULL,
+                  disabled_reason = NULL
                 """,
                 (
                     channel.id,
@@ -121,6 +142,23 @@ class Database:
             conn.execute(
                 "UPDATE channels SET last_indexed_at = ? WHERE id = ?",
                 (_to_iso(when), channel_id),
+            )
+
+    def mark_channel_disabled(
+        self,
+        channel_id: int,
+        *,
+        when: datetime,
+        reason: str,
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE channels
+                SET disabled_at = ?, disabled_reason = ?
+                WHERE id = ?
+                """,
+                (_to_iso(when), reason, channel_id),
             )
 
     def upsert_message(self, message: MessageRecord) -> None:
@@ -257,6 +295,7 @@ class Database:
                   COALESCE(MAX(m.indexed_at), '') AS latest_message_indexed_at
                 FROM channels c
                 JOIN messages m ON m.channel_id = c.id
+                WHERE c.disabled_at IS NULL
                 GROUP BY c.id
                 ORDER BY COALESCE(c.last_indexed_at, '') ASC, c.title ASC
                 """
