@@ -38,6 +38,7 @@ class RankedMessage:
     first_indexed_at: str = ""
     channel_title: str = ""
     channel_username: str | None = None
+    is_new_entry: bool = False
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,18 @@ CREATE TABLE IF NOT EXISTS indexes (
   finished_at TEXT,
   error TEXT,
   FOREIGN KEY (channel_id) REFERENCES channels(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS ranking_appearances (
+  scope TEXT NOT NULL,
+  channel_id INTEGER NOT NULL,
+  message_id INTEGER NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (scope, channel_id, message_id),
+  FOREIGN KEY (channel_id, message_id)
+    REFERENCES messages(channel_id, message_id)
+    ON DELETE CASCADE
 );
 """
 
@@ -335,6 +348,61 @@ class Database:
                 tuple(params),
             ).fetchall()
         return [_ranked_message_from_row(row) for row in rows]
+
+    def mark_ranking_appearances(
+        self,
+        *,
+        scope: str,
+        rows: list[RankedMessage],
+        seen_at: datetime,
+    ) -> list[RankedMessage]:
+        if not rows:
+            return []
+
+        annotated: list[RankedMessage] = []
+        seen_at_iso = _to_iso(seen_at)
+        with self._connect() as conn:
+            for row in rows:
+                existing = conn.execute(
+                    """
+                    SELECT first_seen_at
+                    FROM ranking_appearances
+                    WHERE scope = ? AND channel_id = ? AND message_id = ?
+                    """,
+                    (scope, row.channel_id, row.message_id),
+                ).fetchone()
+                is_new_entry = existing is None
+                annotated.append(replace(row, is_new_entry=is_new_entry))
+                if is_new_entry:
+                    conn.execute(
+                        """
+                        INSERT INTO ranking_appearances (
+                          scope,
+                          channel_id,
+                          message_id,
+                          first_seen_at,
+                          last_seen_at
+                        )
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            scope,
+                            row.channel_id,
+                            row.message_id,
+                            seen_at_iso,
+                            seen_at_iso,
+                        ),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE ranking_appearances
+                        SET last_seen_at = ?
+                        WHERE scope = ? AND channel_id = ? AND message_id = ?
+                        """,
+                        (seen_at_iso, scope, row.channel_id, row.message_id),
+                    )
+        return annotated
 
     def get_status(self, channel_id: int) -> dict[str, Any] | None:
         with self._connect() as conn:

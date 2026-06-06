@@ -265,6 +265,46 @@ class DatabaseTest(unittest.TestCase):
             )
             self.assertEqual([(row.channel_id, row.message_id) for row in new], [(200, 2), (100, 1)])
 
+    def test_ranking_appearances_mark_first_weekly_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "ranker.sqlite3")
+            db.initialize()
+            channel = ChannelInfo(
+                id=100,
+                username="some_channel",
+                title="Some Channel",
+                url="https://t.me/some_channel",
+            )
+            db.upsert_channel(channel)
+            now = datetime(2026, 6, 7, tzinfo=timezone.utc)
+            db.upsert_message(
+                MessageRecord(
+                    channel_id=100,
+                    message_id=1,
+                    date=now,
+                    text_preview="message",
+                    url="https://t.me/some_channel/1",
+                    heart_count=1,
+                    total_reactions=10,
+                    indexed_at=now,
+                )
+            )
+
+            rows = db.get_global_top_messages(limit=10)
+            first = db.mark_ranking_appearances(
+                scope="weekly",
+                rows=rows,
+                seen_at=now,
+            )
+            second = db.mark_ranking_appearances(
+                scope="weekly",
+                rows=rows,
+                seen_at=now + timedelta(days=1),
+            )
+
+            self.assertTrue(first[0].is_new_entry)
+            self.assertFalse(second[0].is_new_entry)
+
 
 if __name__ == "__main__":
     unittest.main()

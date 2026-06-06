@@ -144,6 +144,10 @@ configured Telegram users. The report contains two sections:
 - the top posts published in the last 7 days across all indexed channels
 - the top posts first discovered during that refresh run
 
+Rows marked `[NEW]` in the weekly ranking are entering that weekly report scope
+for the first time. Once a post has appeared in the weekly ranking, it will not
+be marked `[NEW]` again if it remains on or later re-enters the ranking.
+
 The daily task runs inside the bot process and reuses the same Telegram sessions.
 Use `/daily` to trigger the same refresh and report manually.
 If a channel becomes permanently unavailable, for example its username no

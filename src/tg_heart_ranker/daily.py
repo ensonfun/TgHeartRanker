@@ -172,6 +172,11 @@ class DailyReportRunner:
             limit=self.settings.daily_report_top_limit,
             since=finished_at - timedelta(days=7),
         )
+        weekly_top = self.db.mark_ranking_appearances(
+            scope="weekly",
+            rows=weekly_top,
+            seen_at=finished_at,
+        )
         newly_indexed_top = self.db.get_global_top_messages(
             limit=self.settings.daily_report_top_limit,
             first_indexed_since=started_at,
@@ -343,9 +348,10 @@ def _format_ranked_rows(rows: list[RankedMessage]) -> list[str]:
         channel = row.channel_title or row.channel_username or str(row.channel_id)
         preview = _html(row.text_preview or "(no text)")
         url = html.escape(row.url, quote=True)
+        marker = " [NEW]" if row.is_new_entry else ""
         lines.append(
             (
-                f'\n<a href="{url}">#{index:02d} 表情 {row.total_reactions} · '
+                f'\n<a href="{url}">#{index:02d}{marker} 表情 {row.total_reactions} · '
                 f"{_html(channel)} · {row.date[:10]}\n{preview}</a>"
             )
         )

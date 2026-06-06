@@ -5,10 +5,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from tg_heart_ranker.daily import (
+    format_global_ranked_messages,
     _is_permanent_channel_error,
     _random_channel_delay_seconds,
     _retry_delay_seconds,
 )
+from tg_heart_ranker.models import RankedMessage
 from telethon.errors import ChannelPrivateError, UsernameInvalidError
 
 
@@ -67,6 +69,26 @@ class DailySchedulingTest(unittest.TestCase):
             )
         )
         self.assertFalse(_is_permanent_channel_error(OSError("temporary")))
+
+    def test_weekly_report_marks_new_entries(self) -> None:
+        text = format_global_ranked_messages(
+            "Weekly",
+            [
+                RankedMessage(
+                    channel_id=1,
+                    message_id=1,
+                    date="2026-06-07T00:00:00+00:00",
+                    text_preview="hello",
+                    url="https://t.me/example/1",
+                    heart_count=1,
+                    total_reactions=10,
+                    indexed_at="2026-06-07T00:00:00+00:00",
+                    channel_title="Example",
+                    is_new_entry=True,
+                )
+            ],
+        )
+        self.assertIn("#01 [NEW] 表情 10", text)
 
 
 if __name__ == "__main__":
