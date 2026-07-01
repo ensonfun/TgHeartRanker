@@ -151,6 +151,47 @@ class DatabaseTest(unittest.TestCase):
             db.upsert_channel(disabled)
             self.assertIsNone(db.get_status(200)["disabled_at"])
 
+    def test_delete_channel_cascades_local_data(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "ranker.sqlite3")
+            db.initialize()
+            channel = ChannelInfo(
+                id=100,
+                username="delete_me",
+                title="Delete Me",
+                url="https://t.me/delete_me",
+            )
+            now = datetime.now(timezone.utc)
+            db.upsert_channel(channel)
+            db.upsert_message(
+                MessageRecord(
+                    channel_id=100,
+                    message_id=1,
+                    date=now,
+                    text_preview="message",
+                    url="https://t.me/delete_me/1",
+                    heart_count=1,
+                    total_reactions=10,
+                    indexed_at=now,
+                )
+            )
+            rows = db.get_global_top_messages(limit=10)
+            db.mark_ranking_appearances(
+                scope="weekly",
+                rows=rows,
+                seen_at=now,
+            )
+
+            found = db.get_channel_by_username("DELETE_ME")
+            self.assertEqual(found["indexed_messages"], 1)
+
+            deleted = db.delete_channel(100)
+            self.assertEqual(deleted["title"], "Delete Me")
+            self.assertEqual(deleted["indexed_messages"], 1)
+            self.assertIsNone(db.get_channel(100))
+            self.assertEqual(db.get_global_top_messages(limit=10), [])
+            self.assertIsNone(db.delete_channel(100))
+
     def test_first_indexed_at_is_preserved_on_updates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "ranker.sqlite3")

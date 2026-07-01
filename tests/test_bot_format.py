@@ -7,6 +7,7 @@ from tg_heart_ranker.bot import (
     _format_top_messages,
     _index_is_stale,
     _parse_global_args,
+    _parse_delete_callback_data,
     _parse_new_args,
     _parse_url_limit_args,
     _parse_rank_callback_data,
@@ -51,6 +52,18 @@ class BotFormatTest(unittest.TestCase):
     def test_rank_callback_payload_round_trip(self) -> None:
         payload = _rank_callback_data(123, 4, 10, "month")
         self.assertEqual(_parse_rank_callback_data(payload), (123, 4, 10, "month"))
+
+    def test_delete_callback_payload(self) -> None:
+        self.assertEqual(
+            _parse_delete_callback_data(b"delete:confirm:123"),
+            ("confirm", 123),
+        )
+        self.assertEqual(
+            _parse_delete_callback_data(b"delete:cancel:123"),
+            ("cancel", 123),
+        )
+        with self.assertRaises(ValueError):
+            _parse_delete_callback_data(b"delete:unknown:123")
 
     def test_index_stale_uses_24_hour_cache_window(self) -> None:
         fresh = (utc_now() - timedelta(hours=23, minutes=59)).isoformat()

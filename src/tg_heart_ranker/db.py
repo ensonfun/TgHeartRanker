@@ -298,6 +298,42 @@ class Database:
             ).fetchone()
         return dict(row) if row else None
 
+    def get_channel_by_username(self, username: str) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  c.*,
+                  COUNT(m.message_id) AS indexed_messages
+                FROM channels c
+                LEFT JOIN messages m ON m.channel_id = c.id
+                WHERE LOWER(c.username) = LOWER(?)
+                GROUP BY c.id
+                """,
+                (username,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_channel(self, channel_id: int) -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT
+                  c.*,
+                  COUNT(m.message_id) AS indexed_messages
+                FROM channels c
+                LEFT JOIN messages m ON m.channel_id = c.id
+                WHERE c.id = ?
+                GROUP BY c.id
+                """,
+                (channel_id,),
+            ).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            conn.execute("DELETE FROM channels WHERE id = ?", (channel_id,))
+        return result
+
     def list_indexed_channels(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(

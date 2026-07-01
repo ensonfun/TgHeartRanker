@@ -95,6 +95,7 @@ use the bot. Multiple IDs can be separated with commas.
 /daily
 /global [limit] [week|month|year|all]
 /new [limit] [days]
+/delete <channel_url or @username>
 ```
 
 Examples:
@@ -109,6 +110,7 @@ Examples:
 /daily
 /global 10 week
 /new 10 1
+/delete @some_public_channel
 ```
 
 `/rank` is the main command. It refreshes the local index when needed and then
@@ -178,6 +180,11 @@ You can also query cross-channel rankings manually:
 /global 10 week
 /new 10 1
 ```
+
+Use `/delete` to permanently remove a channel and all of its local messages,
+index jobs, and ranking appearance records. The bot requires an inline-button
+confirmation before deleting anything. This command reads the local database,
+so it also works for disabled channels whose Telegram username no longer exists.
 
 ## Configuration
 

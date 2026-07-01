@@ -16,6 +16,7 @@ from .daily import DailyReportRunner, format_daily_report, format_global_ranked_
 from .db import Database, utc_now
 from .indexer import ChannelIndexer
 from .models import IndexResult, RankedMessage
+from .telegram_utils import parse_channel_reference
 
 
 INDEX_CACHE_TTL = timedelta(hours=24)
@@ -32,6 +33,7 @@ Commands:
 /daily
 /global [limit] [week|month|year|all]
 /new [limit] [days]
+/delete <channel_url>
 
 Examples:
 /rank https://t.me/some_public_channel 10
@@ -39,6 +41,7 @@ Examples:
 /top @some_public_channel 10
 /global 10 week
 /new 10 1
+/delete @some_public_channel
 """
 
 
@@ -82,6 +85,9 @@ class HeartRankerBot:
         )
         self.bot_client.add_event_handler(
             self.handle_page_callback, events.CallbackQuery(pattern=b"^rank:")
+        )
+        self.bot_client.add_event_handler(
+            self.handle_delete_callback, events.CallbackQuery(pattern=b"^delete:")
         )
 
     async def handle_message(self, event: events.NewMessage.Event) -> None:
@@ -128,6 +134,8 @@ class HeartRankerBot:
                 await self._handle_global(event, args)
             elif command == "/new":
                 await self._handle_new(event, args)
+            elif command == "/delete":
+                await self._handle_delete(event, args)
             else:
                 await event.respond(HELP_TEXT, parse_mode=None)
         except ValueError as exc:
@@ -226,6 +234,69 @@ class HeartRankerBot:
         except Exception as exc:
             logger.exception(
                 "Unexpected rank callback failure sender_id=%s data=%r",
+                event.sender_id,
+                event.data,
+            )
+            await event.answer(f"Unexpected error: {exc}", alert=True)
+
+    async def handle_delete_callback(
+        self, event: events.CallbackQuery.Event
+    ) -> None:
+        if not self._is_allowed(event.sender_id):
+            await event.answer("This bot is private.", alert=True)
+            return
+
+        try:
+            action, channel_id = _parse_delete_callback_data(event.data)
+            if action == "cancel":
+                await event.edit(
+                    "Channel deletion cancelled.",
+                    buttons=None,
+                    parse_mode=None,
+                )
+                await event.answer()
+                return
+
+            if self.index_lock.locked():
+                await event.answer(
+                    "An index job is running. Try deleting again later.",
+                    alert=True,
+                )
+                return
+
+            deleted = self.db.delete_channel(channel_id)
+            if not deleted:
+                await event.edit(
+                    "Channel was already deleted or is not in the local database.",
+                    buttons=None,
+                    parse_mode=None,
+                )
+                await event.answer()
+                return
+
+            logger.info(
+                "Channel deleted sender_id=%s channel_id=%s username=%s title=%r indexed_messages=%s",
+                event.sender_id,
+                channel_id,
+                deleted.get("username"),
+                deleted.get("title"),
+                deleted.get("indexed_messages"),
+            )
+            await event.edit(
+                (
+                    f"Deleted channel: {deleted.get('title')}\n"
+                    f"Username: @{deleted.get('username')}\n"
+                    f"Deleted messages: {deleted.get('indexed_messages')}"
+                ),
+                buttons=None,
+                parse_mode=None,
+            )
+            await event.answer("Channel deleted.")
+        except ValueError as exc:
+            await event.answer(str(exc), alert=True)
+        except Exception as exc:
+            logger.exception(
+                "Unexpected channel deletion failure sender_id=%s data=%r",
                 event.sender_id,
                 event.data,
             )
@@ -499,6 +570,31 @@ class HeartRankerBot:
             parse_mode="html",
         )
 
+    async def _handle_delete(
+        self, event: events.NewMessage.Event, args: str
+    ) -> None:
+        if not args.strip():
+            raise ValueError("Usage: /delete <channel_url or @username>")
+        username = parse_channel_reference(args.strip())
+        channel = self.db.get_channel_by_username(username)
+        if not channel:
+            await event.respond(
+                "Channel is not in the local database.",
+                parse_mode=None,
+            )
+            return
+        await event.respond(
+            (
+                "Confirm channel deletion:\n"
+                f"Title: {channel.get('title')}\n"
+                f"Username: @{channel.get('username')}\n"
+                f"Indexed messages: {channel.get('indexed_messages')}\n\n"
+                "This permanently removes the channel and all of its local data."
+            ),
+            buttons=_delete_buttons(int(channel["id"])),
+            parse_mode=None,
+        )
+
     def _is_allowed(self, sender_id: int | None) -> bool:
         if not self.settings.allowed_user_ids:
             return True
@@ -619,6 +715,16 @@ def _parse_rank_callback_data(data: bytes) -> tuple[int, int, int, str]:
     if not normalized_period:
         raise ValueError("Invalid time filter.")
     return int(channel_id), int(page), int(limit), normalized_period
+
+
+def _parse_delete_callback_data(data: bytes) -> tuple[str, int]:
+    try:
+        prefix, action, channel_id = data.decode("ascii").split(":")
+    except ValueError as exc:
+        raise ValueError("Invalid channel deletion button.") from exc
+    if prefix != "delete" or action not in {"confirm", "cancel"}:
+        raise ValueError("Invalid channel deletion button.")
+    return action, int(channel_id)
 
 
 def _clamp_page(page: int, limit: int, total: int) -> int:
@@ -824,6 +930,21 @@ def _rank_buttons(
                 "末页", _rank_callback_data(channel_id, last_page, limit, period)
             ),
         ],
+    ]
+
+
+def _delete_buttons(channel_id: int) -> list[list[Button]]:
+    return [
+        [
+            Button.inline(
+                "确认删除",
+                f"delete:confirm:{channel_id}".encode("ascii"),
+            ),
+            Button.inline(
+                "取消",
+                f"delete:cancel:{channel_id}".encode("ascii"),
+            ),
+        ]
     ]
 
 
