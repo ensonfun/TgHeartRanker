@@ -12,6 +12,7 @@ arbitrary public channel link and backfill historical messages on its own.
 ## Features
 
 - Rank public Telegram channel posts by total reaction count across all emojis.
+- Index and display video duration when a post contains a Telegram video.
 - Accept public channel links and `@username` references.
 - Cache indexed messages in a local SQLite database.
 - Page through ranking results with `First`, `Prev`, `Next`, and `Last` buttons.
@@ -225,6 +226,7 @@ The SQLite database stores only the metadata needed for ranking:
 - message URL
 - heart reaction count
 - total reaction count
+- video duration in seconds
 - first indexed timestamp
 - index timestamps and index job status
 

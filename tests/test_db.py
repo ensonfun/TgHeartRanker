@@ -216,6 +216,7 @@ class DatabaseTest(unittest.TestCase):
                     heart_count=1,
                     total_reactions=2,
                     indexed_at=first_seen,
+                    video_duration_seconds=120,
                 )
             )
             db.upsert_message(
@@ -228,12 +229,14 @@ class DatabaseTest(unittest.TestCase):
                     heart_count=2,
                     total_reactions=8,
                     indexed_at=refreshed,
+                    video_duration_seconds=125,
                 )
             )
 
             top = db.get_top_messages(100, 1)
             self.assertEqual(top[0].indexed_at, refreshed.isoformat())
             self.assertEqual(top[0].first_indexed_at, first_seen.isoformat())
+            self.assertEqual(top[0].video_duration_seconds, 125)
 
     def test_global_top_messages_can_filter_by_date_and_first_indexed_at(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

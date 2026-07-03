@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS messages (
   url TEXT NOT NULL,
   heart_count INTEGER NOT NULL DEFAULT 0,
   total_reactions INTEGER NOT NULL DEFAULT 0,
+  video_duration_seconds INTEGER NOT NULL DEFAULT 0,
   indexed_at TEXT NOT NULL,
   first_indexed_at TEXT NOT NULL,
   PRIMARY KEY (channel_id, message_id),
@@ -98,6 +99,13 @@ class Database:
                 UPDATE messages
                 SET first_indexed_at = indexed_at
                 WHERE first_indexed_at IS NULL OR first_indexed_at = ''
+                """
+            )
+        if "video_duration_seconds" not in columns:
+            conn.execute(
+                """
+                ALTER TABLE messages
+                ADD COLUMN video_duration_seconds INTEGER NOT NULL DEFAULT 0
                 """
             )
         conn.execute(
@@ -186,16 +194,18 @@ class Database:
                   url,
                   heart_count,
                   total_reactions,
+                  video_duration_seconds,
                   indexed_at,
                   first_indexed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id, message_id) DO UPDATE SET
                   date = excluded.date,
                   text_preview = excluded.text_preview,
                   url = excluded.url,
                   heart_count = excluded.heart_count,
                   total_reactions = excluded.total_reactions,
+                  video_duration_seconds = excluded.video_duration_seconds,
                   indexed_at = excluded.indexed_at,
                   first_indexed_at = messages.first_indexed_at
                 """,
@@ -207,6 +217,7 @@ class Database:
                     message.url,
                     message.heart_count,
                     message.total_reactions,
+                    message.video_duration_seconds,
                     _to_iso(message.indexed_at),
                     _to_iso(message.first_indexed_at or message.indexed_at),
                 ),
@@ -502,6 +513,7 @@ def _ranked_message_from_row(row: sqlite3.Row) -> RankedMessage:
         url=str(row["url"]),
         heart_count=int(row["heart_count"]),
         total_reactions=int(row["total_reactions"]),
+        video_duration_seconds=int(row["video_duration_seconds"]),
         indexed_at=str(row["indexed_at"]),
         first_indexed_at=str(row["first_indexed_at"]),
         channel_title=str(row["channel_title"]) if "channel_title" in row.keys() else "",

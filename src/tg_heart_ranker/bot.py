@@ -16,7 +16,7 @@ from .daily import DailyReportRunner, format_daily_report, format_global_ranked_
 from .db import Database, utc_now
 from .indexer import ChannelIndexer
 from .models import IndexResult, RankedMessage
-from .telegram_utils import parse_channel_reference
+from .telegram_utils import format_video_duration, parse_channel_reference
 
 
 INDEX_CACHE_TTL = timedelta(hours=24)
@@ -889,7 +889,12 @@ def _format_top_messages(
         date = row.date[:10]
         preview = _html(row.text_preview or "(no text)")
         url = html.escape(row.url, quote=True)
-        item = f"#{rank:02d}  表情 {row.total_reactions}  ·  {date}\n{preview}"
+        duration = format_video_duration(row.video_duration_seconds)
+        duration_text = f"  ·  时长 {duration}" if duration else ""
+        item = (
+            f"#{rank:02d}  表情 {row.total_reactions}"
+            f"{duration_text}  ·  {date}\n{preview}"
+        )
         lines.append(
             f'\n<a href="{url}">{item}</a>'
         )

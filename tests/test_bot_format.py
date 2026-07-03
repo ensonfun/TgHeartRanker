@@ -31,6 +31,7 @@ class BotFormatTest(unittest.TestCase):
                     heart_count=19,
                     total_reactions=20,
                     indexed_at="2026-04-27T00:00:00+00:00",
+                    video_duration_seconds=125,
                 )
             ],
             page=0,
@@ -42,7 +43,7 @@ class BotFormatTest(unittest.TestCase):
         self.assertIn("<b>A &lt;Channel&gt;</b>", text)
         self.assertIn(
             '<a href="https://t.me/example/10?x=1&amp;y=2">'
-            "#01  表情 20  ·  2026-04-13\n"
+            "#01  表情 20  ·  时长 2:05  ·  2026-04-13\n"
             "hello &lt;world&gt;</a>",
             text,
         )

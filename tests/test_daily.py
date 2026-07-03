@@ -85,10 +85,12 @@ class DailySchedulingTest(unittest.TestCase):
                     indexed_at="2026-06-07T00:00:00+00:00",
                     channel_title="Example",
                     is_new_entry=True,
+                    video_duration_seconds=125,
                 )
             ],
         )
         self.assertIn("#01 [NEW] 表情 10", text)
+        self.assertIn("时长 2:05", text)
 
 
 if __name__ == "__main__":

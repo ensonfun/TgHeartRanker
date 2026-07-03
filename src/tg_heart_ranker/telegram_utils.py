@@ -76,6 +76,36 @@ def extract_reaction_counts(reactions: object | None) -> tuple[int, int]:
     return heart_count, total_count
 
 
+def extract_video_duration_seconds(message: object) -> int:
+    video = getattr(message, "video", None)
+    if video is None:
+        return 0
+
+    file = getattr(message, "file", None)
+    duration = getattr(file, "duration", None)
+    if duration is not None:
+        return _normalize_duration_seconds(duration)
+
+    for attribute in getattr(video, "attributes", None) or []:
+        if "Video" not in type(attribute).__name__:
+            continue
+        duration = getattr(attribute, "duration", None)
+        if duration is not None:
+            return _normalize_duration_seconds(duration)
+    return 0
+
+
+def format_video_duration(seconds: int) -> str:
+    seconds = max(0, int(seconds))
+    if seconds == 0:
+        return ""
+    hours, remainder = divmod(seconds, 3600)
+    minutes, remaining_seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{remaining_seconds:02d}"
+    return f"{minutes}:{remaining_seconds:02d}"
+
+
 def is_heart_reaction(reaction: object | None) -> bool:
     emoji = reaction_emoji(reaction)
     return normalize_emoji(emoji) == HEART_BASE
@@ -112,6 +142,13 @@ def text_preview(text: str | None, max_length: int = 120) -> str:
     if len(compact) <= max_length:
         return compact
     return compact[: max_length - 3].rstrip() + "..."
+
+
+def _normalize_duration_seconds(value: object) -> int:
+    try:
+        return max(0, int(round(float(value))))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _is_public_username(value: str) -> bool:

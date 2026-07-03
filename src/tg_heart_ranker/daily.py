@@ -20,6 +20,7 @@ from .config import Settings
 from .db import Database, utc_now
 from .indexer import ChannelIndexer
 from .models import IndexResult, RankedMessage
+from .telegram_utils import format_video_duration
 
 
 logger = logging.getLogger(__name__)
@@ -349,10 +350,12 @@ def _format_ranked_rows(rows: list[RankedMessage]) -> list[str]:
         preview = _html(row.text_preview or "(no text)")
         url = html.escape(row.url, quote=True)
         marker = " [NEW]" if row.is_new_entry else ""
+        duration = format_video_duration(row.video_duration_seconds)
+        duration_text = f" · 时长 {duration}" if duration else ""
         lines.append(
             (
                 f'\n<a href="{url}">#{index:02d}{marker} 表情 {row.total_reactions} · '
-                f"{_html(channel)} · {row.date[:10]}\n{preview}</a>"
+                f"{_html(channel)}{duration_text} · {row.date[:10]}\n{preview}</a>"
             )
         )
     return lines

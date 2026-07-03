@@ -11,6 +11,7 @@ from .models import ChannelInfo, IndexResult, MessageRecord
 from .telegram_utils import (
     canonical_channel_url,
     extract_reaction_counts,
+    extract_video_duration_seconds,
     message_url,
     parse_channel_reference,
     text_preview,
@@ -107,6 +108,7 @@ class ChannelIndexer:
                     heart_count=heart_count,
                     total_reactions=total_reactions,
                     indexed_at=now,
+                    video_duration_seconds=extract_video_duration_seconds(message),
                 )
                 self.db.upsert_message(record)
                 stored += 1
