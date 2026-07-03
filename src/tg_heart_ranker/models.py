@@ -24,6 +24,7 @@ class MessageRecord:
     indexed_at: datetime
     first_indexed_at: datetime | None = None
     video_duration_seconds: int = 0
+    media_group_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class RankedMessage:
     channel_username: str | None = None
     is_new_entry: bool = False
     video_duration_seconds: int = 0
+    media_group_id: int | None = None
 
 
 @dataclass(frozen=True)

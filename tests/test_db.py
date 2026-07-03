@@ -238,6 +238,66 @@ class DatabaseTest(unittest.TestCase):
             self.assertEqual(top[0].first_indexed_at, first_seen.isoformat())
             self.assertEqual(top[0].video_duration_seconds, 125)
 
+    def test_ranked_message_sums_video_duration_across_media_group(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Database(Path(tmpdir) / "ranker.sqlite3")
+            db.initialize()
+            channel = ChannelInfo(
+                id=100,
+                username="some_channel",
+                title="Some Channel",
+                url="https://t.me/some_channel",
+            )
+            db.upsert_channel(channel)
+            now = datetime.now(timezone.utc)
+            records = [
+                MessageRecord(
+                    channel_id=100,
+                    message_id=1,
+                    date=now,
+                    text_preview="album caption",
+                    url="https://t.me/some_channel/1",
+                    heart_count=1,
+                    total_reactions=10,
+                    indexed_at=now,
+                    video_duration_seconds=120,
+                    media_group_id=999,
+                ),
+                MessageRecord(
+                    channel_id=100,
+                    message_id=2,
+                    date=now,
+                    text_preview="",
+                    url="https://t.me/some_channel/2",
+                    heart_count=0,
+                    total_reactions=0,
+                    indexed_at=now,
+                    video_duration_seconds=180,
+                    media_group_id=999,
+                ),
+                MessageRecord(
+                    channel_id=100,
+                    message_id=3,
+                    date=now,
+                    text_preview="single video",
+                    url="https://t.me/some_channel/3",
+                    heart_count=1,
+                    total_reactions=5,
+                    indexed_at=now,
+                    video_duration_seconds=60,
+                ),
+            ]
+            for record in records:
+                db.upsert_message(record)
+
+            top = db.get_top_messages(100, 10)
+            self.assertEqual([row.message_id for row in top], [1, 3])
+            self.assertEqual(top[0].video_duration_seconds, 300)
+            self.assertEqual(top[1].video_duration_seconds, 60)
+
+            global_top = db.get_global_top_messages(limit=10)
+            self.assertEqual(global_top[0].video_duration_seconds, 300)
+
     def test_global_top_messages_can_filter_by_date_and_first_indexed_at(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Database(Path(tmpdir) / "ranker.sqlite3")

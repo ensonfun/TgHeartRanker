@@ -109,6 +109,11 @@ class ChannelIndexer:
                     total_reactions=total_reactions,
                     indexed_at=now,
                     video_duration_seconds=extract_video_duration_seconds(message),
+                    media_group_id=(
+                        int(message.grouped_id)
+                        if getattr(message, "grouped_id", None) is not None
+                        else None
+                    ),
                 )
                 self.db.upsert_message(record)
                 stored += 1

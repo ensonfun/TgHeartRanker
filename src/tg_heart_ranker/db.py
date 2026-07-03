@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS messages (
   heart_count INTEGER NOT NULL DEFAULT 0,
   total_reactions INTEGER NOT NULL DEFAULT 0,
   video_duration_seconds INTEGER NOT NULL DEFAULT 0,
+  media_group_id INTEGER,
   indexed_at TEXT NOT NULL,
   first_indexed_at TEXT NOT NULL,
   PRIMARY KEY (channel_id, message_id),
@@ -108,6 +109,8 @@ class Database:
                 ADD COLUMN video_duration_seconds INTEGER NOT NULL DEFAULT 0
                 """
             )
+        if "media_group_id" not in columns:
+            conn.execute("ALTER TABLE messages ADD COLUMN media_group_id INTEGER")
         conn.execute(
             """
             UPDATE messages
@@ -119,6 +122,12 @@ class Database:
             """
             CREATE INDEX IF NOT EXISTS idx_messages_first_indexed_at
             ON messages(first_indexed_at)
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_messages_media_group
+            ON messages(channel_id, media_group_id)
             """
         )
 
@@ -195,10 +204,11 @@ class Database:
                   heart_count,
                   total_reactions,
                   video_duration_seconds,
+                  media_group_id,
                   indexed_at,
                   first_indexed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(channel_id, message_id) DO UPDATE SET
                   date = excluded.date,
                   text_preview = excluded.text_preview,
@@ -206,6 +216,7 @@ class Database:
                   heart_count = excluded.heart_count,
                   total_reactions = excluded.total_reactions,
                   video_duration_seconds = excluded.video_duration_seconds,
+                  media_group_id = excluded.media_group_id,
                   indexed_at = excluded.indexed_at,
                   first_indexed_at = messages.first_indexed_at
                 """,
@@ -218,6 +229,7 @@ class Database:
                     message.heart_count,
                     message.total_reactions,
                     message.video_duration_seconds,
+                    message.media_group_id,
                     _to_iso(message.indexed_at),
                     _to_iso(message.first_indexed_at or message.indexed_at),
                 ),
@@ -258,7 +270,7 @@ class Database:
         offset: int = 0,
         since: datetime | None = None,
     ) -> list[RankedMessage]:
-        since_filter = "AND date >= ?" if since else ""
+        since_filter = "AND m.date >= ?" if since else ""
         params: tuple[object, ...]
         if since:
             params = (channel_id, _to_iso(since), limit, offset)
@@ -268,11 +280,21 @@ class Database:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT *
-                FROM messages
-                WHERE channel_id = ? AND total_reactions > 0
+                SELECT
+                  m.*,
+                  CASE
+                    WHEN m.media_group_id IS NULL THEN m.video_duration_seconds
+                    ELSE COALESCE((
+                      SELECT SUM(grouped.video_duration_seconds)
+                      FROM messages grouped
+                      WHERE grouped.channel_id = m.channel_id
+                        AND grouped.media_group_id = m.media_group_id
+                    ), 0)
+                  END AS total_video_duration_seconds
+                FROM messages m
+                WHERE m.channel_id = ? AND m.total_reactions > 0
                 {since_filter}
-                ORDER BY total_reactions DESC, date DESC
+                ORDER BY m.total_reactions DESC, m.date DESC
                 LIMIT ?
                 OFFSET ?
                 """,
@@ -385,7 +407,16 @@ class Database:
                 SELECT
                   m.*,
                   c.title AS channel_title,
-                  c.username AS channel_username
+                  c.username AS channel_username,
+                  CASE
+                    WHEN m.media_group_id IS NULL THEN m.video_duration_seconds
+                    ELSE COALESCE((
+                      SELECT SUM(grouped.video_duration_seconds)
+                      FROM messages grouped
+                      WHERE grouped.channel_id = m.channel_id
+                        AND grouped.media_group_id = m.media_group_id
+                    ), 0)
+                  END AS total_video_duration_seconds
                 FROM messages m
                 JOIN channels c ON c.id = m.channel_id
                 WHERE {" AND ".join(filters)}
@@ -513,7 +544,16 @@ def _ranked_message_from_row(row: sqlite3.Row) -> RankedMessage:
         url=str(row["url"]),
         heart_count=int(row["heart_count"]),
         total_reactions=int(row["total_reactions"]),
-        video_duration_seconds=int(row["video_duration_seconds"]),
+        video_duration_seconds=int(
+            row["total_video_duration_seconds"]
+            if "total_video_duration_seconds" in row.keys()
+            else row["video_duration_seconds"]
+        ),
+        media_group_id=(
+            int(row["media_group_id"])
+            if row["media_group_id"] is not None
+            else None
+        ),
         indexed_at=str(row["indexed_at"]),
         first_indexed_at=str(row["first_indexed_at"]),
         channel_title=str(row["channel_title"]) if "channel_title" in row.keys() else "",
